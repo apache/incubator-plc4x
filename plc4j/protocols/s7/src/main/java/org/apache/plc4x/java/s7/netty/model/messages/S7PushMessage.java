@@ -16,18 +16,13 @@ KIND, either express or implied.  See the License for the
 specific language governing permissions and limitations
 under the License.
 */
-package org.apache.plc4x.java.s7.netty.model.params;
 
-import org.apache.plc4x.java.s7.netty.model.types.CpuServicesParameterFunctionGroup;
-import org.apache.plc4x.java.s7.netty.model.types.CpuServicesParameterSubFunctionGroup;
+package org.apache.plc4x.java.s7.netty.model.messages;
 
-public class CpuServicesRequestParameter extends CpuServicesParameter {
-
-    public CpuServicesRequestParameter(CpuServicesParameterFunctionGroup functionGroup, 
-            CpuServicesParameterSubFunctionGroup subFunctionGroup, 
-            byte sequenceNumber) {
-        
-        super(functionGroup, subFunctionGroup, sequenceNumber);
-    }
-
+/**
+ *
+ * @author cgarcia
+ */
+public interface S7PushMessage {
+    
 }

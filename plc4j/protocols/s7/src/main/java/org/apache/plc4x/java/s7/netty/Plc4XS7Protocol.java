@@ -21,33 +21,6 @@ package org.apache.plc4x.java.s7.netty;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelHandlerContext;
-import org.apache.commons.lang3.tuple.ImmutablePair;
-import org.apache.commons.lang3.tuple.Pair;
-import org.apache.plc4x.java.api.exceptions.*;
-import org.apache.plc4x.java.api.messages.PlcReadRequest;
-import org.apache.plc4x.java.api.messages.PlcRequest;
-import org.apache.plc4x.java.api.messages.PlcResponse;
-import org.apache.plc4x.java.api.messages.PlcWriteRequest;
-import org.apache.plc4x.java.api.model.PlcField;
-import org.apache.plc4x.java.api.types.PlcResponseCode;
-import org.apache.plc4x.java.base.PlcMessageToMessageCodec;
-import org.apache.plc4x.java.base.events.ConnectedEvent;
-import org.apache.plc4x.java.base.messages.*;
-import org.apache.plc4x.java.base.messages.items.*;
-import org.apache.plc4x.java.s7.model.S7Field;
-import org.apache.plc4x.java.s7.netty.events.S7ConnectedEvent;
-import org.apache.plc4x.java.s7.netty.model.messages.S7Message;
-import org.apache.plc4x.java.s7.netty.model.messages.S7RequestMessage;
-import org.apache.plc4x.java.s7.netty.model.messages.S7ResponseMessage;
-import org.apache.plc4x.java.s7.netty.model.params.VarParameter;
-import org.apache.plc4x.java.s7.netty.model.params.items.S7AnyVarParameterItem;
-import org.apache.plc4x.java.s7.netty.model.params.items.VarParameterItem;
-import org.apache.plc4x.java.s7.netty.model.payloads.VarPayload;
-import org.apache.plc4x.java.s7.netty.model.payloads.items.VarPayloadItem;
-import org.apache.plc4x.java.s7.netty.model.types.*;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.io.IOException;
 import java.lang.reflect.Array;
 import java.math.BigInteger;
@@ -58,11 +31,46 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
+import org.apache.commons.lang3.tuple.ImmutablePair;
+import org.apache.commons.lang3.tuple.Pair;
+import org.apache.plc4x.java.api.exceptions.*;
+import org.apache.plc4x.java.api.messages.PlcReadRequest;
+import org.apache.plc4x.java.api.messages.PlcRequest;
+import org.apache.plc4x.java.api.messages.PlcResponse;
+import org.apache.plc4x.java.api.messages.PlcSubscriptionRequest;
+import org.apache.plc4x.java.api.messages.PlcUnsubscriptionRequest;
+import org.apache.plc4x.java.api.messages.PlcWriteRequest;
+import org.apache.plc4x.java.api.model.PlcField;
+import org.apache.plc4x.java.api.types.PlcResponseCode;
+import org.apache.plc4x.java.base.PlcMessageToMessageCodec;
+import org.apache.plc4x.java.base.events.ConnectedEvent;
+import org.apache.plc4x.java.base.messages.*;
+import org.apache.plc4x.java.base.messages.items.*;
+import org.apache.plc4x.java.s7.model.S7Field;
+import org.apache.plc4x.java.s7.netty.events.S7ConnectedEvent;
+import org.apache.plc4x.java.s7.netty.model.messages.S7Message;
+import org.apache.plc4x.java.s7.netty.model.messages.S7PushMessage;
+import org.apache.plc4x.java.s7.netty.model.messages.S7RequestMessage;
+import org.apache.plc4x.java.s7.netty.model.messages.S7ResponseMessage;
+import org.apache.plc4x.java.s7.netty.model.params.CpuServicesParameter;
+import org.apache.plc4x.java.s7.netty.model.params.CpuServicesRequestParameter;
+import org.apache.plc4x.java.s7.netty.model.params.S7Parameter;
+import org.apache.plc4x.java.s7.netty.model.params.VarParameter;
+import org.apache.plc4x.java.s7.netty.model.params.items.S7AnyVarParameterItem;
+import org.apache.plc4x.java.s7.netty.model.params.items.VarParameterItem;
+import org.apache.plc4x.java.s7.netty.model.payloads.AlarmMessagePayload;
+import org.apache.plc4x.java.s7.netty.model.payloads.CpuMessageSubscriptionServicePayload;
+import org.apache.plc4x.java.s7.netty.model.payloads.S7Payload;
+import org.apache.plc4x.java.s7.netty.model.payloads.VarPayload;
+import org.apache.plc4x.java.s7.netty.model.payloads.items.VarPayloadItem;
+import org.apache.plc4x.java.s7.netty.model.types.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * This layer transforms between {@link PlcRequestContainer}s {@link S7Message}s.
@@ -79,10 +87,24 @@ public class Plc4XS7Protocol extends PlcMessageToMessageCodec<S7Message, PlcRequ
     private static final AtomicInteger tpduGenerator = new AtomicInteger(10);
 
     private Map<Short, PlcRequestContainer> requests;
+    
+    private final BlockingQueue<S7PushMessage> alarmsqueue;
 
     public Plc4XS7Protocol() {
         this.requests = new HashMap<>();
+        this.alarmsqueue = null;
     }
+    /*
+    * @param s7Type
+    * 
+    */
+    public Plc4XS7Protocol(BlockingQueue<S7PushMessage> alarmsqueue) {
+        this.requests = new HashMap<>();
+        //We need check the device here
+        this.alarmsqueue = alarmsqueue;
+    }
+    
+    
 
     /**
      * If this protocol layer catches an {@link S7ConnectedEvent} from the protocol layer beneath,
@@ -153,9 +175,57 @@ public class Plc4XS7Protocol extends PlcMessageToMessageCodec<S7Message, PlcRequ
             encodeReadRequest(msg, out);
         } else if (request instanceof PlcWriteRequest) {
             encodeWriteRequest(msg, out);
+        } else if (request instanceof PlcSubscriptionRequest) {
+            encodeSubcriptionRequest(msg, out);
+        } else if (request instanceof PlcUnsubscriptionRequest) {
+            encodeUnsubcriptionRequest(msg, out);
         }
     }
 
+    private void encodeSubcriptionRequest(PlcRequestContainer msg, List<Object> out) throws PlcException {
+        byte subsevent = 0;
+        List<S7Parameter> parameterItems = new LinkedList<>();
+        List<S7Payload> payloadItems = new LinkedList<>();
+         
+        PlcSubscriptionRequest subsRequest = (PlcSubscriptionRequest)  msg.getRequest();
+        
+        for (String fieldName : subsRequest.getFieldNames()) {                        
+            if ( subsRequest.getField(fieldName) instanceof SubscribedEventType){
+                 SubscribedEventType event = (SubscribedEventType) subsRequest.getField(fieldName);
+                 subsevent = (byte) (subsevent | event.getCode());
+            }
+        }
+        
+        CpuServicesParameter cpuservice = new CpuServicesRequestParameter(CpuServicesParameterFunctionGroup.CPU_FUNCTIONS,
+            CpuServicesParameterSubFunctionGroup.MESSAGE_SERVICE, (byte) 0x00);
+        
+        parameterItems.add(cpuservice);
+        
+       
+        S7Payload Data = new CpuMessageSubscriptionServicePayload(DataTransportErrorCode.OK,
+                                DataTransportSize.OCTET_STRING,
+                                subsevent,
+                                new String("HmiRtm  "),
+                                AlarmType.ALARM_S_INITIATE);
+        payloadItems.add(Data);
+
+        
+        S7RequestMessage s7ReadRequest = new S7RequestMessage(MessageType.USER_DATA,
+            (short) tpduGenerator.getAndIncrement(), 
+            parameterItems,
+            payloadItems, 
+            msg);
+
+        requests.put(s7ReadRequest.getTpduReference(), msg);
+
+        out.add(s7ReadRequest);            
+  
+    }
+    
+    private void encodeUnsubcriptionRequest(PlcRequestContainer msg, List<Object> out) throws PlcException {
+        //TODO : Perform subscription termination 
+    }    
+    
     private void encodeReadRequest(PlcRequestContainer msg, List<Object> out) throws PlcException {
         List<VarParameterItem> parameterItems = new LinkedList<>();
 
@@ -391,7 +461,7 @@ public class Plc4XS7Protocol extends PlcMessageToMessageCodec<S7Message, PlcRequ
         // TODO: Implement this ...
         return new byte[0];
     }
-
+    
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // Decoding
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -400,9 +470,12 @@ public class Plc4XS7Protocol extends PlcMessageToMessageCodec<S7Message, PlcRequ
     @Override
     protected void decode(ChannelHandlerContext ctx, S7Message msg, List<Object> out) throws PlcException {
         // We're currently just expecting responses.
+
         if (!(msg instanceof S7ResponseMessage)) {
+            logger.info("Aborta decode: " + msg.getMessageType());
             return;
         }
+        
         S7ResponseMessage responseMessage = (S7ResponseMessage) msg;
         short tpduReference = responseMessage.getTpduReference();
         if (requests.containsKey(tpduReference)) {
@@ -416,15 +489,41 @@ public class Plc4XS7Protocol extends PlcMessageToMessageCodec<S7Message, PlcRequ
                 response = decodeReadResponse(responseMessage, requestContainer);
             } else if (request instanceof PlcWriteRequest) {
                 response = decodeWriteResponse(responseMessage, requestContainer);
+            } else if (request instanceof PlcSubscriptionRequest) {
+                response = decodeSubscriptionResponse(responseMessage, requestContainer);
+            } else {
+                logger.info("There is the client's request, but it is not a valid response....");
             }
 
             // Confirm the response being handled.
             if (response != null) {
                 requestContainer.getResponseFuture().complete(response);
+            } else {
+                logger.info("The message could not be processed...");
             }
+        } else {
+            //PUSH Message
+            List<S7Parameter> parameters = msg.getParameters();
+            for (S7Parameter parameter:parameters){
+                if (parameter instanceof S7PushMessage){
+                    if (!alarmsqueue.offer((S7PushMessage) parameter)){
+                        logger.info("Alarm queue buffer is full.");
+                    };                    
+                }    
+            }
+            
+            List<S7Payload> payloads = msg.getPayloads();  
+            //TODO: Use alarmsqueue.addAll() method
+            for (S7Payload payload:payloads){
+                if (payload instanceof S7PushMessage){
+                    if (!alarmsqueue.offer((S7PushMessage) payload)){
+                        logger.info("Alarm queue buffer is full.");
+                    };
+                }
+            }            
         }
     }
-
+        // TODO: Check if it is a CPU service response and proceed as applicable.
     @SuppressWarnings("unchecked")
     private PlcResponse decodeReadResponse(S7ResponseMessage responseMessage, PlcRequestContainer requestContainer) throws PlcProtocolException {
         InternalPlcReadRequest plcReadRequest = (InternalPlcReadRequest) requestContainer.getRequest();
@@ -740,6 +839,19 @@ public class Plc4XS7Protocol extends PlcMessageToMessageCodec<S7Message, PlcRequ
         return new DefaultPlcWriteResponse(plcWriteRequest, values);
     }
 
+    private PlcResponse decodeSubscriptionResponse(S7ResponseMessage responseMessage, PlcRequestContainer requestContainer) throws PlcProtocolException {
+        InternalPlcSubscriptionRequest subsRequest = (InternalPlcSubscriptionRequest) requestContainer.getRequest();
+        List<S7Payload> payloads = responseMessage.getPayloads();
+        for (S7Payload payload:payloads){
+            if(payload instanceof AlarmMessagePayload) {  
+                logger.info("OK. Si pasa el mensaje como un Payload...: " + ((AlarmMessagePayload) payload).getReturnCode());
+                //logger.info("Alarm Type...: " + ((AlarmMessagePayload) payload).getMsgtype());                
+            }
+        }
+        return new DefaultPlcSubscriptionResponse(subsRequest, null);
+    }
+    
+    
     private PlcResponseCode decodeResponseCode(DataTransportErrorCode dataTransportErrorCode) {
         if (dataTransportErrorCode == null) {
             return PlcResponseCode.INTERNAL_ERROR;
@@ -840,5 +952,7 @@ public class Plc4XS7Protocol extends PlcMessageToMessageCodec<S7Message, PlcRequ
         int dec = (incomingByte >> 4) * 10;
         return dec + (incomingByte & 0x0f);
     }
+    
+
 
 }
